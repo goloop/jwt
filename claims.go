@@ -1,6 +1,19 @@
 package jwt
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
+
+// NumericDate bounds. Per RFC 7519 a NumericDate is seconds since the Unix
+// epoch; exp/nbf/iat outside 0001-01-01..9999-12-31 are rejected as malformed,
+// both because they are nonsensical as a date and because an extreme value fed
+// to time.Unix overflows into a wildly wrong time (a token with exp near
+// math.MinInt64 would otherwise be read as far in the future and never expire).
+const (
+	minNumericDate = -62135596800 // 0001-01-01T00:00:00Z
+	maxNumericDate = 253402300799 // 9999-12-31T23:59:59Z
+)
 
 // Audience is the aud claim. Per RFC 7519 it may be a single string or an array
 // of strings; it marshals to a string when it holds one value.
@@ -114,8 +127,14 @@ func (c Claims) MarshalJSON() ([]byte, error) {
 // than silently coerced, so a malformed exp or aud cannot slip through
 // verification as if it were absent.
 func (c *Claims) UnmarshalJSON(data []byte) error {
+	// Decode with UseNumber so registered NumericDate claims keep full integer
+	// precision: a plain decode rounds every JSON number through float64, which
+	// silently corrupts exp/nbf/iat above 2^53. Custom claims in Extra are
+	// therefore json.Number, not float64.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		return err
 	}
 	var err error
@@ -163,30 +182,31 @@ func popString(m map[string]any, key string) (string, error) {
 	return s, nil
 }
 
-// popInt removes key and returns its NumericDate value as Unix seconds. JSON
-// numbers are integral seconds; a present non-numeric or fractional value is an
-// error.
+// popInt removes key and returns its NumericDate value as Unix seconds. The
+// value must be an integer within the NumericDate bounds: a non-numeric,
+// fractional, or out-of-range value is rejected as ErrMalformed. Rejecting
+// fractional seconds is stricter than RFC 7519 (which permits them) but keeps
+// the claim a whole second and avoids ambiguity; the bounds check runs before
+// any time.Unix conversion so an extreme value can never overflow into a wrong
+// time.
 func popInt(m map[string]any, key string) (int64, error) {
 	v, ok := m[key]
 	if !ok {
 		return 0, nil
 	}
 	delete(m, key)
-	switch n := v.(type) {
-	case float64:
-		if n != float64(int64(n)) {
-			return 0, ErrMalformed
-		}
-		return int64(n), nil
-	case json.Number:
-		i, err := n.Int64()
-		if err != nil {
-			return 0, ErrMalformed
-		}
-		return i, nil
-	default:
+	n, ok := v.(json.Number)
+	if !ok {
 		return 0, ErrMalformed
 	}
+	i, err := n.Int64()
+	if err != nil {
+		return 0, ErrMalformed
+	}
+	if i < minNumericDate || i > maxNumericDate {
+		return 0, ErrMalformed
+	}
+	return i, nil
 }
 
 // popAudience removes key and returns the aud claim. It accepts a string or an

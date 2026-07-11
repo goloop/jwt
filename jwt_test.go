@@ -250,6 +250,56 @@ func TestVerifyExpiryBoundaryExclusive(t *testing.T) {
 	}
 }
 
+// craftToken signs an arbitrary JSON payload with testKey, for tests that need
+// a claim value the typed Claims struct cannot express.
+func craftToken(t *testing.T, payloadJSON string) string {
+	t.Helper()
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(payloadJSON))
+	sig := sign(testKey, hdr+"."+payload)
+	return hdr + "." + payload + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+func TestVerifyRejectsExtremeExpiry(t *testing.T) {
+	// A signed token whose exp is math.MinInt64 must not be read as far in the
+	// future (time.Unix overflow) and accepted as never-expiring.
+	tok := craftToken(t, `{"sub":"u","exp":-9223372036854775808}`)
+	if _, err := Verify(tok, testKey); err != ErrMalformed {
+		t.Fatalf("Verify MinInt64 exp = %v, want ErrMalformed", err)
+	}
+	// Just past the year-9999 bound is also malformed.
+	tok = craftToken(t, `{"sub":"u","exp":253402300800}`)
+	if _, err := Verify(tok, testKey); err != ErrMalformed {
+		t.Fatalf("Verify out-of-range exp = %v, want ErrMalformed", err)
+	}
+}
+
+func TestVerifyRejectsFractionalExpiry(t *testing.T) {
+	tok := craftToken(t, `{"sub":"u","exp":1700000000.5}`)
+	if _, err := Verify(tok, testKey); err != ErrMalformed {
+		t.Fatalf("Verify fractional exp = %v, want ErrMalformed", err)
+	}
+}
+
+func TestVerifyPreservesLargeExtraNumber(t *testing.T) {
+	// A custom numeric claim larger than 2^53 must survive round-trip without
+	// float64 precision loss; Extra numbers are json.Number.
+	const big = "9007199254740993" // 2^53 + 1
+	tok := craftToken(t, `{"sub":"u","exp":`+itoa(time.Now().Add(time.Hour).Unix())+
+		`,"uid":`+big+`}`)
+	claims, err := Verify(tok, testKey)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	n, ok := claims.Extra["uid"].(json.Number)
+	if !ok {
+		t.Fatalf("Extra[uid] = %T, want json.Number", claims.Extra["uid"])
+	}
+	if n.String() != big {
+		t.Fatalf("Extra[uid] = %s, want %s (precision lost)", n.String(), big)
+	}
+}
+
 // itoa avoids importing strconv just for the crafted-token tests.
 func itoa(n int64) string {
 	return strings.TrimSpace(string(appendInt(nil, n)))

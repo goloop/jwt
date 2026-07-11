@@ -37,12 +37,18 @@ type Claims struct {
 }
 ```
 
-Times are Unix seconds (RFC 7519 NumericDate). `Extra` holds **only** custom
-claims: a registered claim name (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`,
-`jti`) in `Extra` is rejected by `Sign` (`ErrReservedClaim`), so the typed
-fields are the single source of truth for registered claims. `Audience`
-marshals to a JSON string when it holds one value, an array otherwise, and
-unmarshals from either.
+Times are Unix seconds (RFC 7519 NumericDate). The registered date claims are
+parsed with full integer precision and must be whole seconds within
+`0001-01-01..9999-12-31`; a fractional or out-of-range `exp`/`nbf`/`iat` is
+rejected as `ErrMalformed` (this is stricter than the RFC, which permits
+fractional dates, and prevents an extreme value from overflowing `time.Unix`
+into a wrong time). `Extra` holds **only** custom claims: a registered claim
+name (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`) in `Extra` is rejected by
+`Sign` (`ErrReservedClaim`), so the typed fields are the single source of truth
+for registered claims. Numbers decoded into `Extra` are `json.Number` (not
+`float64`), so large integer claims keep their exact value; read them with
+`Extra[k].(json.Number)`. `Audience` marshals to a JSON string when it holds one
+value, an array otherwise, and unmarshals from either.
 
 ## Signing
 
