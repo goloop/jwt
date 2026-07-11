@@ -36,10 +36,11 @@ type Claims struct {
 }
 ```
 
-Час - Unix-секунди (NumericDate за RFC 7519). `Extra` тримає кастомні claim-и і
-зливається в payload; зареєстрований claim перемагає однойменний ключ `Extra`.
-`Audience` маршалиться в JSON-рядок для одного значення, інакше в масив, і
-демаршалиться з обох.
+Час - Unix-секунди (NumericDate за RFC 7519). `Extra` тримає **лише** кастомні
+claim-и: ім'я зареєстрованого claim-а (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`,
+`jti`) в `Extra` відхиляється `Sign` (`ErrReservedClaim`), тож типізовані поля -
+єдине джерело правди для зареєстрованих claim-ів. `Audience` маршалиться в
+JSON-рядок для одного значення, інакше в масив, і демаршалиться з обох.
 
 ## Підпис
 
@@ -47,7 +48,8 @@ type Claims struct {
 token, err := jwt.Sign(claims, key)
 ```
 
-Ключ має бути непорожнім (`ErrNoKey`). Підпис маршалить claim-и, base64url-кодує
+Ключ має бути не коротшим за 32 байти (`ErrWeakKey`; порожній - `ErrNoKey`) -
+розмір виходу HMAC-SHA256 за RFC 7518. Підпис маршалить claim-и, base64url-кодує
 константний заголовок і payload, і додає HMAC-SHA256 від `header.payload`.
 
 ## Перевірка
@@ -58,37 +60,49 @@ claims, err := jwt.Verify(token, key, opts...)
 
 Кроки по порядку:
 
-1. розбити рівно на три непорожні сегменти (`ErrMalformed`);
-2. декодувати заголовок і вимагати `alg=HS256` (`ErrAlgMismatch`);
-3. перевірити підпис проти кожного налаштованого ключа constant-time-порівнянням
+1. відхилити токен, довший за `WithMaxBytes` (`ErrTooLarge`), якщо задано;
+2. розбити рівно на три непорожні сегменти (`ErrMalformed`); кожен сегмент має
+   бути строгим base64url (вбудовані пробіли відхиляються, а не пропускаються);
+3. декодувати заголовок, вимагати `alg=HS256` (`ErrAlgMismatch`) і відхилити
+   будь-який заявлений `crit` (`ErrUnsupportedCritical`);
+4. перевірити підпис проти кожного налаштованого ключа через `hmac.Equal`
    (`ErrSignature`) - **до** декодування payload;
-4. декодувати payload;
-5. вимагати `exp` (`ErrMissingExpiry`) і перевірити `exp`/`nbf`/`iat` з leeway;
-6. перевірити issuer і audience, якщо налаштовано.
+5. декодувати payload; зареєстрований claim неправильного JSON-типу
+   відхиляється (`ErrMalformed`), а не мовчки приводиться;
+6. вимагати `exp` (`ErrMissingExpiry`) і перевірити `exp`/`nbf`/`iat` з leeway
+   (`exp` виключний: токен недійсний у момент `exp`+leeway і пізніше);
+7. перевірити issuer і audience, якщо налаштовано.
 
 ## Опції
 
 | Опція | Ефект |
 |-------|-------|
-| `WithKey(key)` | додати ще ключ перевірки (ротація) |
+| `WithKey(key)` | додати ще ключ перевірки (ротація); ключі < 32 байт ігноруються |
 | `WithLeeway(d)` | допуск на розбіжність годинника для exp/nbf/iat |
 | `WithIssuer(s)` | вимагати iss == s |
 | `WithAudience(s)` | вимагати aud, що містить s |
-| `WithClock(fn)` | перевизначити джерело часу (тести) |
+| `WithMaxBytes(n)` | відхилити токен, довший за n байт, до розбору |
+| `WithClock(fn)` | перевизначити джерело часу (тести); nil ігнорується |
 
 ## Помилки
 
-`ErrNoKey`, `ErrMalformed`, `ErrAlgMismatch`, `ErrSignature`, `ErrMissingExpiry`,
-`ErrExpired`, `ErrNotYetValid`, `ErrIssuedInFuture`, `ErrIssuer`, `ErrAudience`.
-Усі - sentinel-помилки, порівнювані через `errors.Is`.
+`ErrNoKey`, `ErrWeakKey`, `ErrReservedClaim`, `ErrMalformed`,
+`ErrUnsupportedCritical`, `ErrTooLarge`, `ErrAlgMismatch`, `ErrSignature`,
+`ErrMissingExpiry`, `ErrExpired`, `ErrNotYetValid`, `ErrIssuedInFuture`,
+`ErrIssuer`, `ErrAudience`. Усі - sentinel-помилки, порівнювані через `errors.Is`.
 
 ## Нотатки безпеки
 
-- Лише HS256; `none` й асиметричні алгоритми відкидаються.
-- Підпис перевіряється constant-time (`hmac.Equal`) до інтерпретації payload,
-  тож підроблений payload ніколи не доходить до ваших claim-ів.
+- Лише HS256; `none` й асиметричні алгоритми відкидаються (`ErrAlgMismatch`).
+- Ключ має бути не коротшим за 32 байти; коротші відхиляються, а не приймаються
+  мовчки.
+- Підпис порівнюється через `hmac.Equal` до інтерпретації payload, тож
+  підроблений payload ніколи не доходить до ваших claim-ів.
+- `crit` відхиляється: верифікатор не реалізує розширень, тож ніколи не прийме
+  токен, для якого видавець вимагав невідому семантику.
+- Сегменти мають бути строгим base64url, тож токен не протягне пробіли повз
+  стандартний декодер.
 - `exp` обов'язковий: токен без строку дії відхиляється.
-- Використовуйте ключ високої ентропії від 32 байт (HS256 - SHA-256).
 - Парсер профаззено; він не панікує на некоректному вводі.
 
 ## Межі

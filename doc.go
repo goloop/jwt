@@ -17,7 +17,9 @@
 //	token, err := jwt.Sign(claims, key)
 //
 // The header is always {"alg":"HS256","typ":"JWT"}. Custom claims go in
-// Claims.Extra and are merged into the payload.
+// Claims.Extra; a registered claim name there is rejected (ErrReservedClaim),
+// so registered claims come only from the typed fields. The key must be at
+// least 32 bytes (ErrWeakKey), the HMAC-SHA256 output size required by RFC 7518.
 //
 // # Verifying
 //
@@ -26,11 +28,14 @@
 //	    jwt.WithLeeway(30*time.Second),
 //	)
 //
-// Verify requires alg=HS256 and a present exp, verifies the signature in
-// constant time before interpreting the payload, and checks exp/nbf/iat plus
-// any configured issuer and audience. For key rotation, pass additional keys
-// with WithKey: tokens are signed with the primary key and verified against
-// any configured key.
+// Verify requires alg=HS256 and a present exp, verifies the HMAC signature
+// (compared with hmac.Equal) before interpreting the payload, and then checks
+// exp/nbf/iat plus any configured issuer and audience. It rejects a token that
+// declares a crit header, a segment that is not strict base64url, and a
+// registered claim of the wrong JSON type. For key rotation, pass additional
+// keys with WithKey: tokens are signed with the primary key and verified
+// against any configured key. WithMaxBytes bounds the work spent on untrusted
+// input.
 //
 // # Not supported
 //

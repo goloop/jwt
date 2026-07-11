@@ -10,10 +10,30 @@ import (
 // never depends on map ordering.
 const header = `{"alg":"HS256","typ":"JWT"}`
 
-// Sign creates a signed HS256 JWT for the claims. The key must be non-empty.
-func Sign(claims Claims, key []byte) (string, error) {
+// minKeyLen is the smallest HS256 key accepted: 32 bytes (256 bits), matching
+// the HMAC-SHA256 output size as required by RFC 7518.
+const minKeyLen = 32
+
+// checkKey reports whether key is usable for HS256: present and long enough.
+func checkKey(key []byte) error {
 	if len(key) == 0 {
-		return "", ErrNoKey
+		return ErrNoKey
+	}
+	if len(key) < minKeyLen {
+		return ErrWeakKey
+	}
+	return nil
+}
+
+// Sign creates a signed HS256 JWT for the claims. The key must be at least 32
+// bytes. Claims.Extra must not carry registered claim names; set those through
+// the typed fields.
+func Sign(claims Claims, key []byte) (string, error) {
+	if err := checkKey(key); err != nil {
+		return "", err
+	}
+	if claims.hasReservedExtra() {
+		return "", ErrReservedClaim
 	}
 
 	payload, err := json.Marshal(claims)

@@ -163,3 +163,108 @@ func FuzzVerify(f *testing.F) {
 		_, _ = Verify(token, testKey)
 	})
 }
+
+// --- production hardening (v0.1.0) ---------------------------------------
+
+func TestSignRejectsWeakKey(t *testing.T) {
+	c := Claims{ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	if _, err := Sign(c, []byte("short")); err != ErrWeakKey {
+		t.Fatalf("Sign short key = %v, want ErrWeakKey", err)
+	}
+	if _, err := Sign(c, nil); err != ErrNoKey {
+		t.Fatalf("Sign nil key = %v, want ErrNoKey", err)
+	}
+	if _, err := Verify("a.b.c", []byte("short")); err != ErrWeakKey {
+		t.Fatalf("Verify short key = %v, want ErrWeakKey", err)
+	}
+}
+
+func TestSignRejectsReservedExtra(t *testing.T) {
+	c := Claims{
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Extra:     map[string]any{"exp": 1},
+	}
+	if _, err := Sign(c, testKey); err != ErrReservedClaim {
+		t.Fatalf("Sign reserved Extra = %v, want ErrReservedClaim", err)
+	}
+}
+
+func TestVerifyRejectsCritHeader(t *testing.T) {
+	// Hand-craft a token whose header declares a crit parameter.
+	hdr := base64.RawURLEncoding.EncodeToString(
+		[]byte(`{"alg":"HS256","typ":"JWT","crit":["exp"]}`))
+	payload := base64.RawURLEncoding.EncodeToString(
+		[]byte(`{"exp":` + itoa(time.Now().Add(time.Hour).Unix()) + `}`))
+	sig := sign(testKey, hdr+"."+payload)
+	tok := hdr + "." + payload + "." + base64.RawURLEncoding.EncodeToString(sig)
+	if _, err := Verify(tok, testKey); err != ErrUnsupportedCritical {
+		t.Fatalf("Verify crit = %v, want ErrUnsupportedCritical", err)
+	}
+}
+
+func TestVerifyRejectsMalformedRegisteredClaim(t *testing.T) {
+	// exp as a string, not a number.
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":"soon"}`))
+	sig := sign(testKey, hdr+"."+payload)
+	tok := hdr + "." + payload + "." + base64.RawURLEncoding.EncodeToString(sig)
+	if _, err := Verify(tok, testKey); err != ErrMalformed {
+		t.Fatalf("Verify string exp = %v, want ErrMalformed", err)
+	}
+}
+
+func TestVerifyRejectsSegmentWithNewline(t *testing.T) {
+	tok := hourToken(t, nil)
+	parts := strings.SplitN(tok, ".", 3)
+	// Inject a newline the stdlib base64 decoder would otherwise ignore.
+	tampered := parts[0] + "\n." + parts[1] + "." + parts[2]
+	if _, err := Verify(tampered, testKey); err != ErrMalformed {
+		t.Fatalf("Verify newline segment = %v, want ErrMalformed", err)
+	}
+}
+
+func TestVerifyMaxBytes(t *testing.T) {
+	tok := hourToken(t, nil)
+	if _, err := Verify(tok, testKey, WithMaxBytes(10)); err != ErrTooLarge {
+		t.Fatalf("Verify oversize = %v, want ErrTooLarge", err)
+	}
+	if _, err := Verify(tok, testKey, WithMaxBytes(len(tok))); err != nil {
+		t.Fatalf("Verify at limit = %v, want nil", err)
+	}
+}
+
+func TestVerifyNilClockIgnored(t *testing.T) {
+	tok := hourToken(t, nil)
+	if _, err := Verify(tok, testKey, WithClock(nil)); err != nil {
+		t.Fatalf("Verify nil clock = %v, want nil (default clock)", err)
+	}
+}
+
+func TestVerifyExpiryBoundaryExclusive(t *testing.T) {
+	exp := time.Now().Add(time.Hour)
+	tok := hourToken(t, func(c *Claims) { c.ExpiresAt = exp.Unix() })
+	// Exactly at exp (no leeway) must be rejected.
+	at := func() time.Time { return exp }
+	if _, err := Verify(tok, testKey, WithClock(at)); err != ErrExpired {
+		t.Fatalf("Verify at exp = %v, want ErrExpired", err)
+	}
+}
+
+// itoa avoids importing strconv just for the crafted-token tests.
+func itoa(n int64) string {
+	return strings.TrimSpace(string(appendInt(nil, n)))
+}
+
+func appendInt(b []byte, n int64) []byte {
+	if n == 0 {
+		return append(b, '0')
+	}
+	var tmp [20]byte
+	i := len(tmp)
+	for n > 0 {
+		i--
+		tmp[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return append(b, tmp[i:]...)
+}

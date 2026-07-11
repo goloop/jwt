@@ -53,11 +53,34 @@ type Claims struct {
 	Extra     map[string]any
 }
 
-// MarshalJSON merges the registered claims and Extra into one JSON object.
-// Registered claims take precedence over same-named Extra keys.
+// registeredNames are the RFC 7519 registered claim keys. They may only be set
+// through the typed Claims fields, never through Extra, so the origin of every
+// registered claim is unambiguous.
+var registeredNames = map[string]struct{}{
+	"iss": {}, "sub": {}, "aud": {}, "exp": {}, "nbf": {}, "iat": {}, "jti": {},
+}
+
+// hasReservedExtra reports whether Extra holds any registered claim name, so
+// Sign can fail with a clean ErrReservedClaim before marshaling.
+func (c Claims) hasReservedExtra() bool {
+	for k := range c.Extra {
+		if _, ok := registeredNames[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// MarshalJSON merges the registered claims and Extra into one JSON object. Extra
+// carries only custom claims; a registered claim name in Extra is an error
+// (ErrReservedClaim), because the typed fields are the single source of truth
+// for those claims.
 func (c Claims) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any, len(c.Extra)+7)
 	for k, v := range c.Extra {
+		if _, reserved := registeredNames[k]; reserved {
+			return nil, ErrReservedClaim
+		}
 		m[k] = v
 	}
 	if c.Issuer != "" {
@@ -86,19 +109,37 @@ func (c Claims) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// UnmarshalJSON extracts the registered claims and keeps the rest in Extra.
+// UnmarshalJSON extracts the registered claims and keeps the rest in Extra. A
+// registered claim with the wrong JSON type is rejected (ErrMalformed) rather
+// than silently coerced, so a malformed exp or aud cannot slip through
+// verification as if it were absent.
 func (c *Claims) UnmarshalJSON(data []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	c.Issuer = popString(raw, "iss")
-	c.Subject = popString(raw, "sub")
-	c.ID = popString(raw, "jti")
-	c.ExpiresAt = popInt(raw, "exp")
-	c.NotBefore = popInt(raw, "nbf")
-	c.IssuedAt = popInt(raw, "iat")
-	c.Audience = popAudience(raw, "aud")
+	var err error
+	if c.Issuer, err = popString(raw, "iss"); err != nil {
+		return err
+	}
+	if c.Subject, err = popString(raw, "sub"); err != nil {
+		return err
+	}
+	if c.ID, err = popString(raw, "jti"); err != nil {
+		return err
+	}
+	if c.ExpiresAt, err = popInt(raw, "exp"); err != nil {
+		return err
+	}
+	if c.NotBefore, err = popInt(raw, "nbf"); err != nil {
+		return err
+	}
+	if c.IssuedAt, err = popInt(raw, "iat"); err != nil {
+		return err
+	}
+	if c.Audience, err = popAudience(raw, "aud"); err != nil {
+		return err
+	}
 	if len(raw) > 0 {
 		c.Extra = raw
 	} else {
@@ -107,53 +148,70 @@ func (c *Claims) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func popString(m map[string]any, key string) string {
+// popString removes key and returns its string value. A present non-string
+// value is an error.
+func popString(m map[string]any, key string) (string, error) {
 	v, ok := m[key]
 	if !ok {
-		return ""
+		return "", nil
 	}
 	delete(m, key)
-	s, _ := v.(string)
-	return s
+	s, ok := v.(string)
+	if !ok {
+		return "", ErrMalformed
+	}
+	return s, nil
 }
 
-func popInt(m map[string]any, key string) int64 {
+// popInt removes key and returns its NumericDate value as Unix seconds. JSON
+// numbers are integral seconds; a present non-numeric or fractional value is an
+// error.
+func popInt(m map[string]any, key string) (int64, error) {
 	v, ok := m[key]
 	if !ok {
-		return 0
+		return 0, nil
 	}
 	delete(m, key)
 	switch n := v.(type) {
 	case float64:
-		return int64(n)
-	case int64:
-		return n
+		if n != float64(int64(n)) {
+			return 0, ErrMalformed
+		}
+		return int64(n), nil
 	case json.Number:
-		i, _ := n.Int64()
-		return i
+		i, err := n.Int64()
+		if err != nil {
+			return 0, ErrMalformed
+		}
+		return i, nil
 	default:
-		return 0
+		return 0, ErrMalformed
 	}
 }
 
-func popAudience(m map[string]any, key string) Audience {
+// popAudience removes key and returns the aud claim. It accepts a string or an
+// array of strings; any other shape, including an array with a non-string
+// element, is an error.
+func popAudience(m map[string]any, key string) (Audience, error) {
 	v, ok := m[key]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	delete(m, key)
 	switch a := v.(type) {
 	case string:
-		return Audience{a}
+		return Audience{a}, nil
 	case []any:
 		out := make(Audience, 0, len(a))
 		for _, e := range a {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
+			s, ok := e.(string)
+			if !ok {
+				return nil, ErrMalformed
 			}
+			out = append(out, s)
 		}
-		return out
+		return out, nil
 	default:
-		return nil
+		return nil, ErrMalformed
 	}
 }

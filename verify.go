@@ -14,6 +14,7 @@ type options struct {
 	issuer   string
 	audience string
 	now      func() time.Time
+	maxBytes int
 }
 
 // Option configures Verify.
@@ -21,13 +22,20 @@ type Option func(*options)
 
 // WithKey adds another key to try during verification, for key rotation. Tokens
 // are always signed with the primary key; verification accepts any configured
-// key.
+// key. A key shorter than 32 bytes is ignored, matching the signing minimum.
 func WithKey(key []byte) Option {
 	return func(o *options) {
-		if len(key) > 0 {
+		if len(key) >= minKeyLen {
 			o.keys = append(o.keys, key)
 		}
 	}
+}
+
+// WithMaxBytes rejects a token longer than n bytes before any parsing, to bound
+// the work spent on untrusted input. The default (0) imposes no limit; set a
+// limit when verifying tokens from the open internet.
+func WithMaxBytes(n int) Option {
+	return func(o *options) { o.maxBytes = n }
 }
 
 // WithLeeway allows a clock-skew tolerance when checking exp, nbf and iat.
@@ -45,22 +53,34 @@ func WithAudience(audience string) Option {
 	return func(o *options) { o.audience = audience }
 }
 
-// WithClock overrides the time source (for testing).
+// WithClock overrides the time source (for testing). A nil function is ignored,
+// leaving the default of time.Now.
 func WithClock(now func() time.Time) Option {
-	return func(o *options) { o.now = now }
+	return func(o *options) {
+		if now != nil {
+			o.now = now
+		}
+	}
 }
 
 // Verify parses and validates an HS256 JWT and returns its claims. It requires
-// alg=HS256 and a present exp; it verifies the signature (constant time) before
-// interpreting the payload, and checks exp/nbf/iat plus any configured issuer
-// and audience.
+// alg=HS256 and a present exp; it verifies the HMAC signature (compared with
+// hmac.Equal) before interpreting the payload, then checks exp/nbf/iat plus any
+// configured issuer and audience. A token that declares a crit header is
+// rejected, since this verifier implements no extensions.
 func Verify(token string, key []byte, opts ...Option) (Claims, error) {
-	if len(key) == 0 {
-		return Claims{}, ErrNoKey
+	if err := checkKey(key); err != nil {
+		return Claims{}, err
 	}
 	o := options{keys: [][]byte{key}, now: time.Now}
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if o.now == nil {
+		o.now = time.Now
+	}
+	if o.maxBytes > 0 && len(token) > o.maxBytes {
+		return Claims{}, ErrTooLarge
 	}
 
 	parts := strings.Split(token, ".")
@@ -68,20 +88,25 @@ func Verify(token string, key []byte, opts ...Option) (Claims, error) {
 		return Claims{}, ErrMalformed
 	}
 
-	// Header: reject anything but HS256 before spending work on the signature.
+	// Header: reject anything but HS256, and any declared crit extension,
+	// before spending work on the signature.
 	headerBytes, err := decodeSegment(parts[0])
 	if err != nil {
 		return Claims{}, ErrMalformed
 	}
 	var hdr struct {
-		Alg string `json:"alg"`
-		Typ string `json:"typ"`
+		Alg  string   `json:"alg"`
+		Typ  string   `json:"typ"`
+		Crit []string `json:"crit"`
 	}
 	if err := json.Unmarshal(headerBytes, &hdr); err != nil {
 		return Claims{}, ErrMalformed
 	}
 	if hdr.Alg != "HS256" {
 		return Claims{}, ErrAlgMismatch
+	}
+	if len(hdr.Crit) > 0 {
+		return Claims{}, ErrUnsupportedCritical
 	}
 
 	// Signature: verify before interpreting the payload.
@@ -131,7 +156,9 @@ func validate(c Claims, o options) error {
 	if c.ExpiresAt == 0 {
 		return ErrMissingExpiry
 	}
-	if now.After(time.Unix(c.ExpiresAt, 0).Add(o.leeway)) {
+	// RFC 7519: the token must not be accepted on or after exp. The leeway
+	// widens that boundary for clock skew but keeps it exclusive.
+	if !now.Before(time.Unix(c.ExpiresAt, 0).Add(o.leeway)) {
 		return ErrExpired
 	}
 	if c.NotBefore != 0 && now.Before(time.Unix(c.NotBefore, 0).Add(-o.leeway)) {
