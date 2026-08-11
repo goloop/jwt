@@ -20,6 +20,8 @@
 // Claims.Extra; a registered claim name there is rejected (ErrReservedClaim),
 // so registered claims come only from the typed fields. The key must be at
 // least 32 bytes (ErrWeakKey), the HMAC-SHA256 output size required by RFC 7518.
+// CheckKey runs that same check on its own, so a configuration layer can fail
+// at process start instead of at the first token.
 //
 // # Verifying
 //

@@ -25,6 +25,18 @@ func checkKey(key []byte) error {
 	return nil
 }
 
+// CheckKey reports whether key is usable for HS256: ErrNoKey when it is empty,
+// ErrWeakKey when it is shorter than 32 bytes, nil otherwise. It is the same
+// check Sign and Verify run on every call, exported so a configuration layer
+// can fail at startup instead of at the first token - and without copying the
+// 32-byte rule into its own code, where it would drift.
+//
+// It validates the key alone. A nil result does not prove a token will verify:
+// that still depends on the token.
+func CheckKey(key []byte) error {
+	return checkKey(key)
+}
+
 // Sign creates a signed HS256 JWT for the claims. The key must be at least 32
 // bytes. Claims.Extra must not carry registered claim names; set those through
 // the typed fields.

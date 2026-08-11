@@ -318,3 +318,17 @@ func appendInt(b []byte, n int64) []byte {
 	}
 	return append(b, tmp[i:]...)
 }
+
+func TestCheckKey(t *testing.T) {
+	// The same rule Sign and Verify apply, callable before either: a config
+	// layer fails at startup instead of at the first token.
+	if err := CheckKey(nil); err != ErrNoKey {
+		t.Fatalf("CheckKey(nil) = %v, want ErrNoKey", err)
+	}
+	if err := CheckKey([]byte("short")); err != ErrWeakKey {
+		t.Fatalf("CheckKey(short) = %v, want ErrWeakKey", err)
+	}
+	if err := CheckKey(testKey); err != nil {
+		t.Fatalf("CheckKey(good) = %v, want nil", err)
+	}
+}

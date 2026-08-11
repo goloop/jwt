@@ -47,6 +47,17 @@ claims, err := jwt.Verify(token, key,
 - verifies the signature in **constant time before** interpreting the payload;
 - checks `exp`/`nbf`/`iat` with optional leeway, and issuer/audience when set.
 
+## Startup validation
+
+```go
+if err := jwt.CheckKey(key); err != nil {
+	log.Fatal(err) // fail at process start, not at the first token
+}
+```
+
+`CheckKey` is the same check `Sign` and `Verify` run on every call: `ErrNoKey`
+for an empty key, `ErrWeakKey` under 32 bytes.
+
 ## Key rotation
 
 ```go
