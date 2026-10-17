@@ -1,4 +1,4 @@
-[![Go Reference](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/goloop/jwt) [![License](https://img.shields.io/badge/license-MIT-brightgreen)](https://github.com/goloop/jwt/blob/master/LICENSE) [![Stay with Ukraine](https://img.shields.io/static/v1?label=Stay%20with&message=Ukraine%20♥&color=ffD700&labelColor=0057B8&style=flat)](https://u24.gov.ua/)
+[![Go Reference](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/goloop/jwt) [![License](https://img.shields.io/badge/license-MIT-brightgreen)](https://github.com/goloop/jwt/blob/v1/LICENSE) [![Stay with Ukraine](https://img.shields.io/static/v1?label=Stay%20with&message=Ukraine%20♥&color=ffD700&labelColor=0057B8&style=flat)](https://u24.gov.ua/)
 
 # jwt
 
@@ -79,3 +79,7 @@ signature verification.
 ## License
 
 MIT - see [LICENSE](LICENSE).
+
+## Release v1.1.1
+
+Decode null audiences correctly and avoid copying signed token input.

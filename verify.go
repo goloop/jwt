@@ -83,7 +83,7 @@ func Verify(token string, key []byte, opts ...Option) (Claims, error) {
 		return Claims{}, ErrTooLarge
 	}
 
-	parts := strings.Split(token, ".")
+	parts := strings.SplitN(token, ".", 4)
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return Claims{}, ErrMalformed
 	}
@@ -114,7 +114,7 @@ func Verify(token string, key []byte, opts ...Option) (Claims, error) {
 	if err != nil {
 		return Claims{}, ErrMalformed
 	}
-	signingInput := parts[0] + "." + parts[1]
+	signingInput := token[:len(parts[0])+1+len(parts[1])]
 	if !anyKeyVerifies(o.keys, signingInput, sig) {
 		return Claims{}, ErrSignature
 	}

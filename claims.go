@@ -40,6 +40,10 @@ func (a Audience) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON accepts either a string or an array of strings.
 func (a *Audience) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		*a = nil
+		return nil
+	}
 	var single string
 	if err := json.Unmarshal(data, &single); err == nil {
 		*a = Audience{single}

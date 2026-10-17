@@ -119,3 +119,7 @@ The steps, in order:
 `jwt` does: sign and verify HS256 tokens with the registered claims and custom
 claims. It does not: support other algorithms, `none`, JWE, JWKS, or expose
 unverified parsing.
+
+## Release v1.1.1
+
+Decode null audiences correctly and avoid copying signed token input.

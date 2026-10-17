@@ -1,4 +1,4 @@
-[![Go Reference](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/goloop/jwt) [![License](https://img.shields.io/badge/license-MIT-brightgreen)](https://github.com/goloop/jwt/blob/master/LICENSE) [![Stay with Ukraine](https://img.shields.io/static/v1?label=Stay%20with&message=Ukraine%20♥&color=ffD700&labelColor=0057B8&style=flat)](https://u24.gov.ua/)
+[![Go Reference](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/goloop/jwt) [![License](https://img.shields.io/badge/license-MIT-brightgreen)](https://github.com/goloop/jwt/blob/v1/LICENSE) [![Stay with Ukraine](https://img.shields.io/static/v1?label=Stay%20with&message=Ukraine%20♥&color=ffD700&labelColor=0057B8&style=flat)](https://u24.gov.ua/)
 
 # jwt
 
@@ -67,3 +67,7 @@ claims, err := jwt.Verify(token, newKey, jwt.WithKey(oldKey))
 ## Ліцензія
 
 MIT - див. [LICENSE](LICENSE).
+
+## Реліз v1.1.1
+
+Audience декодує JSON null як nil. Verify використовує підрядок токена для перевірки підпису та обмежує розбиття некоректного вводу.
